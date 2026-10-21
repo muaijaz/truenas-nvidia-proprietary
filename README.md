@@ -177,6 +177,18 @@ app settings are kept.
 * **Xid 79 "GPU has fallen off the bus" under load is power, not software.**
   Give the card its own PCIe power cables from the PSU; a single lead
   pigtailed into 8+6 pins did exactly this.
+* **Xid 79 on the very first init of a boot, with the power already fixed, is a
+  marginal PCIe link.** On a Supermicro X11SSM-F this survived a card reseat
+  and a CMOS battery swap, and the BIOS PEG port page showed the slot trained
+  at x1. Capping the slot at Gen2 and turning off its ASPM in the BIOS
+  (Chipset Configuration > System Agent > PEG Port Configuration >
+  *SLOTn Max Link Speed* = Gen2, *SLOTn ASPM Support* = Disabled) fixed it:
+  first-try init on every cold boot since. Transcoding does not need Gen3
+  bandwidth, so the cap costs nothing.
+* **A dead CMOS battery makes all of this look like a software problem.**
+  BIOS settings and the clock reset on every power loss, and "Wait For F1 If
+  Error" halts an unattended boot. Replace the battery before chasing the
+  driver.
 * **A PCI remove/rescan followed by a warm reboot can leave the link at x1.**
   A cold power cycle retrains it to full width.
 * The script logs to `/var/log/nvidia-proprietary.log`.
