@@ -41,7 +41,7 @@ scp -q "$NAS:/usr/share/truenas/sysext-extensions/nvidia.raw" "$WORK/stock-nvidi
 
 say "Downloading NVIDIA-Linux-x86_64-$NVVER-no-compat32.run"
 RUN="$WORK/NVIDIA-Linux-x86_64-$NVVER-no-compat32.run"
-[ -s "$RUN" ] || curl -fL --retry 3 -o "$RUN" "$NV_URL_BASE/$NVVER/NVIDIA-Linux-x86_64-$NVVER-no-compat32.run"
+[ -s "$RUN" ] || curl -fL --retry 3 --progress-bar -o "$RUN" "$NV_URL_BASE/$NVVER/NVIDIA-Linux-x86_64-$NVVER-no-compat32.run"
 sh "$RUN" --check >/dev/null
 rm -rf "$WORK/src"; sh "$RUN" --extract-only --target "$WORK/src" >/dev/null
 [ -d "$WORK/src/kernel" ] || { echo "installer has no proprietary kernel/ tree" >&2; exit 1; }
@@ -58,7 +58,7 @@ for m in nvidia nvidia-modeset nvidia-drm nvidia-uvm nvidia-peermem; do
 done
 
 say "Repackaging sysext"
-docker run --rm -v "$WORK:/w" "$IMAGE" bash -euo pipefail -c "
+docker run --rm -v "$WORK:/w" -e "OWNER=$(id -u):$(id -g)" "$IMAGE" bash -euo pipefail -c "
   rm -rf /w/sx && mkdir -p /w/sx && cd /w/sx
   unsquashfs -q -d root /w/stock-nvidia.raw >/dev/null
   D=root/usr/lib/modules/$KVER/kernel/drivers/video
@@ -70,6 +70,7 @@ docker run --rm -v "$WORK:/w" "$IMAGE" bash -euo pipefail -c "
   done
   [ \"\$(modinfo -F license \$D/nvidia.ko)\" = NVIDIA ] || { echo 'built module is not proprietary?' >&2; exit 1; }
   mksquashfs root /w/nvidia.raw -comp xz -noappend -quiet -no-progress
+  chown \"\$OWNER\" /w/nvidia.raw
 "
 mv "$WORK/nvidia.raw" "$OUT/nvidia.raw"
 sha256sum "$OUT/nvidia.raw" | tee "$OUT/nvidia.raw.sha256"
