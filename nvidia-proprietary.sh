@@ -40,6 +40,10 @@ until load_and_check; do
   echo 1 > /sys/bus/pci/rescan; sleep 5
 done
 echo "modules loaded: license=$(modinfo -F license nvidia)"
+# Persistence mode keeps the GPU initialized after the last client exits, so
+# the card is brought up once per boot instead of on every open (each init is
+# a chance for a marginal card to drop off the bus with Xid 79).
+nvidia-smi -pm 1 >/dev/null 2>&1 && echo "persistence mode on" || echo "persistence mode not set"
 # Redeploy RUNNING apps that have an NVIDIA GPU selected so their containers get
 # the device (at PRE INIT nothing is running yet, so this only matters on re-runs)
 for app in $(for n in $(midclt call app.query 2>/dev/null | python3 -c 'import sys,json; print(" ".join(a["name"] for a in json.load(sys.stdin) if a.get("state")=="RUNNING"))'); do

@@ -38,7 +38,9 @@ NVDEC) works inside the app container, survives reboots.
 * `nvidia-proprietary.sh` runs at **Pre Init**: it repoints the
   `/run/extensions/nvidia.raw` symlink to the custom image, refreshes sysext,
   loads the driver and checks `nvidia-smi` (with a PCI bus reset and retry if
-  the first init fails). Running at Pre Init matters: at Post Init it races the
+  the first init fails), then turns on persistence mode so the card is
+  initialized once per boot rather than on every client open.
+  Running at Pre Init matters: at Post Init it races the
   middleware's own `modprobe` and Docker's container start, and the GPU can
   drop off the bus (Xid 79).
 * If TrueNAS updates the kernel, the script detects that the image does not
