@@ -45,28 +45,127 @@ NVDEC) works inside the app container, survives reboots.
   match and leaves the stock driver in place. Rebuild with `build.sh` and
   reinstall.
 
-## Requirements
+## Setup, step by step
 
-* A build machine with Docker, `ssh`, `rsync`, `curl` (the NAS itself cannot
-  compile; its `/usr` is read-only).
-* SSH access to the NAS as a user with passwordless sudo.
-* Apps > Settings > "Install NVIDIA drivers" enabled on the NAS (this is what
-  creates the stock sysext the build reuses).
+You need two machines: the NAS, and any Linux or macOS box with Docker to do
+the compiling (the NAS cannot compile; its root filesystem is read-only).
+About 15 minutes the first time.
 
-## Use
+### 1. On the NAS: enable SSH with passwordless sudo
+
+1. **Credentials > Users**, edit your admin user (usually `truenas_admin`).
+   Tick **SSH Access**, paste your build machine's public key into
+   **Authorized Keys**, and tick **Allow all sudo commands with no password**.
+   Leave *SSH password login* off.
+2. **System > Services**, turn **SSH** on and tick *Start Automatically*.
+3. From the build machine, confirm both work:
+
+   ```
+   ssh truenas_admin@<nas-ip> 'sudo -n true && echo sudo ok'
+   ```
+
+   Optional: add an entry to `~/.ssh/config` so you can refer to the NAS by a
+   short name. The scripts take anything `ssh` accepts (`my-nas`,
+   `truenas_admin@10.0.0.12`, ...).
+
+### 2. On the NAS: turn on TrueNAS's NVIDIA support
+
+**Apps > Settings**, tick **Install NVIDIA Drivers**. This needs an Apps
+pool to be configured. It will *not* make your GPU work yet (the stock
+module refuses pre-Turing cards and logs the GSP error), but it installs the
+stock system-extension image that this project builds on. Confirm it exists:
 
 ```
-./build.sh   my-nas       # ~2 minutes; output in out/nvidia.raw
-./install.sh my-nas       # copies image + script, applies it live
+ssh my-nas ls -la /usr/share/truenas/sysext-extensions/nvidia.raw
 ```
 
-Then register the script once in the UI: System > Advanced > Init/Shutdown
-Scripts > Add, Type *Script*, Script
-`/var/lib/truenas-custom/nvidia-proprietary.sh`, When *Pre Init*, Timeout 120.
+### 3. On the build machine: install the tools
 
-Finally enable the GPU on your apps (Apps > app > Edit > Resources > GPU
-Configuration). For NVIDIA cards this is the per-GPU checkbox, not "use all
-GPUs"; the latter only covers Intel and AMD devices.
+Docker, `git`, `ssh`, `rsync`, `curl`. On Debian/Ubuntu:
+
+```
+sudo apt install docker.io git rsync curl
+```
+
+The build runs inside a `debian:12` container so the compiler matches the
+one TrueNAS built its kernel with (GCC 12). Nothing else is installed on
+your machine.
+
+### 4. Build
+
+```
+git clone https://github.com/muaijaz/truenas-nvidia-proprietary.git
+cd truenas-nvidia-proprietary
+./build.sh my-nas
+```
+
+The script reads the kernel and driver versions from the NAS, copies the
+headers and the stock image, downloads the matching NVIDIA installer
+(about 330 MB, checksum-verified), compiles, and writes `out/nvidia.raw`.
+It stops if anything does not line up: missing headers, no proprietary tree
+in the installer, a dependency mismatch, or a module that is not proprietary.
+
+### 5. Install
+
+```
+./install.sh my-nas
+```
+
+This copies the image and the boot script to `/var/lib/truenas-custom/` on
+the NAS (that directory is on the boot pool, survives reboots, and is outside
+the read-only root) and applies the swap immediately. Expect
+`modules loaded: license=NVIDIA` and your GPU's name in the output, and
+`ssh my-nas nvidia-smi` should now list the card.
+
+### 6. Register the boot script (one time, in the UI)
+
+**System > Advanced > Init/Shutdown Scripts > Add**
+
+| Field | Value |
+|---|---|
+| Description | NVIDIA proprietary driver |
+| Type | Script |
+| Script | `/var/lib/truenas-custom/nvidia-proprietary.sh` |
+| When | **Pre Init** |
+| Enabled | yes |
+| Timeout | 120 |
+
+*Pre Init* is required. At *Post Init* the script races the middleware's own
+driver load and Docker's container start, and the GPU can drop off the bus.
+
+Reboot once and check that `ssh my-nas nvidia-smi` comes back on its own.
+
+### 7. Give the GPU to your apps
+
+For each app that should use it (Jellyfin, Plex, Immich, Frigate, ...):
+**Apps > the app > Edit > Resources Configuration > GPU Configuration**, tick
+the checkbox for your NVIDIA card. Do **not** rely on "Use all GPUs"; that
+switch only covers Intel and AMD devices. Save; the app redeploys with the
+device.
+
+Do this only while `nvidia-smi` works. TrueNAS silently unticks the GPU on
+an app if the card is not visible at save time.
+
+Then turn hardware acceleration on inside the app. Jellyfin: Dashboard >
+Playback > Transcoding > Hardware acceleration *NVIDIA NVENC*, tick the
+decode formats your card supports, tick *Enable hardware encoding*.
+
+### 8. Verify end to end
+
+```
+ssh my-nas 'C=$(sudo docker ps -q -f name=ix-jellyfin-jellyfin); sudo docker exec $C sh -c \
+  "/usr/lib/jellyfin-ffmpeg/ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=1920x1080:rate=30 -t 3 -c:v h264_nvenc -f null - && echo NVENC_OK"'
+```
+
+`NVENC_OK` means the whole chain works: driver, sysext, container toolkit,
+app GPU passthrough.
+
+## After a TrueNAS update
+
+If the update changes the kernel, the boot script notices the image no
+longer matches and leaves the stock driver alone (your GPU stops working,
+nothing breaks). Re-run steps 4 and 5; the init script registration and the
+app settings are kept.
 
 ## Gotchas learned the hard way
 
